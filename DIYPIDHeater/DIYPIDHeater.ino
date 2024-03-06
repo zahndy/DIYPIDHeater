@@ -32,6 +32,8 @@ const int PwrRelayPin = 2;
 bool preHeat = false;
 bool isPreHeating = false;
 
+bool on = false;
+
 int animationIndex =0;
 
 //Thermistor
@@ -49,24 +51,44 @@ FastPID myPID(Kp, Ki, Kd, Hz, output_bits, output_signed);
 
 //LCD
 LiquidCrystal_I2C lcd(0x38,16,2);
+byte cornerChar[8] = {
+  0b00100,
+	0b00100,
+	0b00100,
+	0b00111,
+	0b00000,
+	0b00000,
+	0b00000,
+	0b00000
+};
+byte backslashChar[8] = {
+	0b00000,
+	0b10000,
+	0b01000,
+	0b00100,
+	0b00010,
+	0b00001,
+	0b00000,
+	0b00000
+};
 
 void setup() {
   if (myPID.err()) {
     //Serial.println("There is a configuration error!");
     for (;;) {}
   }
-  //Serial.begin(9600); // init serial library
- // Serial.print("Temp");
-  //Serial.print(" ");
-  //Serial.println("PWM");
   pinMode(MosFetPin, OUTPUT);
   pinMode(PwrRelayPin, OUTPUT);
   lcd.init();
   lcd.backlight();
   PrepareLCD();
+  lcd.createChar(0, cornerChar);
+  lcd.createChar(1, backslashChar);
   //TargetTemperature = 450; // default off state 18C for initial flash, use eeprom after
   ReadTempFromRom();
   preHeat = true;
+  isPreHeating = false;
+  on = digitalRead(PwrSwPin);
   delay(200);
 }
 
@@ -76,7 +98,6 @@ void loop() {
   // update every 500ms
   if (currentMillis - previousMillis >= 500) {
     previousMillis = currentMillis;
-    //read temp and perform PID
     PidStep();
   }
 }
@@ -126,15 +147,18 @@ void Buttons(unsigned long currentMillis)
       PwrSwBtnState = PwrSwReading;
       if (PwrSwBtnState == HIGH) {
         // power on
+        on =1;
         digitalWrite(PwrRelayPin, HIGH);
         ReadTempFromRom();
         myPID.configure(Kp, Ki, Kd, Hz, output_bits, output_signed);
         preHeat = true;
+        isPreHeating = false;
         PidStep();
         
       }
       else{
         // power off
+        on =0;
         UpdateTempRom();
         digitalWrite(PwrRelayPin, LOW);
         //TargetTemperature = 450; // default off state 18C
@@ -144,15 +168,16 @@ void Buttons(unsigned long currentMillis)
     }
   }
   PwrSwlastButtonState = PwrSwReading;
- // end buttons
-
 }
+
 void PrepareLCD()
 {
   lcd.clear();
-  //lcd.print("Tmp:");
   lcd.setCursor(0,1);
-  lcd.print("Set:");
+  lcd.write(byte(0));
+  lcd.setCursor(1,1);
+  //lcd.write(byte(1));
+  lcd.print((char)126);
   lcd.setCursor(8,1);
   lcd.print(" PWM: ");
 }
@@ -177,81 +202,84 @@ void PidStep()
   int setpoint = TargetTemperature;
   int feedback = T;
   
-  
-  lcd.setCursor(4,1);//Display
-  lcd.print(AnalogToTmp(setpoint)+(char)223+"C");
-
+  lcd.setCursor(2,1);//Display
+  lcd.print(String(AnalogToTmp(setpoint),0)+(char)223+"C");
   lcd.setCursor(0,0); 
-  
-  if(preHeat)
+  if(on)
   {
-    lcd.print(String(AnalogToTmp(T),1)+(char)223+"C" + "Warming up"); // 10 char left at the end
-    if(!isPreHeating)
+    if(preHeat)
     {
-      SetTemp(output);
-      isPreHeating = true;
+      lcd.print(String(AnalogToTmp(T),1)+(char)223+"C" + "  Warm up ");
+      if(!isPreHeating)
+      {
+        SetTemp(255);
+        isPreHeating = true;
+      }
+      lcd.setCursor(13,1);
+      switch (animationIndex) {
+        case 0:
+          lcd.print(".");
+          break;
+        case 1:
+          lcd.print("..");
+          break;
+        case 2:
+          lcd.print("...");
+          break;
+        default:
+          lcd.print("   ");
+          break;
+      }
+      if(T>setpoint)
+      {
+        preHeat = false;
+        isPreHeating = false;
+      }
     }
-    lcd.setCursor(13,1);
-    switch (animationIndex) {
-      case 0:
-        lcd.print(.);
-        break;
-      case 1:
-        lcd.print(..);
-        break;
-      case 2:
-        lcd.print(...);
-        break;
-      default:
-        lcd.print(   );
-        break;
-    }
-    if(T>setpoint)
+    else
     {
-      preHeat = false;
-      isPreHeating = false;
+      
+      switch (animationIndex) {
+        case 0:
+          lcd.print(String(AnalogToTmp(T),1)+(char)223+"C" + "  Ready   ");
+          lcd.setCursor(15,0); 
+          lcd.write(byte(1));
+          break;
+        case 1:
+          lcd.print(String(AnalogToTmp(T),1)+(char)223+"C" + "  Ready  |");
+          break;
+        case 2:
+          lcd.print(String(AnalogToTmp(T),1)+(char)223+"C" + "  Ready  /");
+          break;
+        default:
+          lcd.print(String(AnalogToTmp(T),1)+(char)223+"C" + "  Ready  -");
+          break;
+      }
+      uint8_t output = myPID.step(setpoint, feedback);
+      lcd.setCursor(13,1);
+      if(output<100){
+        if(output<10){
+          lcd.print("  "+String(output));
+          }
+        else{
+          lcd.print(" "+String(output));
+          }
+      }
+      else{
+        lcd.print(String(output));
+      }
+      SetTemp(output); //mosfet
+    }
+    animationIndex++;
+    if(animationIndex>3)
+    {
+      animationIndex=0;
     }
   }
   else
   {
-    
-    switch (animationIndex) {
-      case 0:
-        lcd.print(String(AnalogToTmp(T),1)+(char)223+"C" + "  Ready  \\");
-        break;
-      case 1:
-        lcd.print(String(AnalogToTmp(T),1)+(char)223+"C" + "  Ready  |");
-        break;
-      case 2:
-        lcd.print(String(AnalogToTmp(T),1)+(char)223+"C" + "  Ready  /");
-        break;
-      default:
-        lcd.print(String(AnalogToTmp(T),1)+(char)223+"C" + "  Ready  -");
-        break;
-    }
-    uint8_t output = myPID.step(setpoint, feedback);
-    lcd.setCursor(13,1);
-    if(output<100){
-      if(output<10){
-        lcd.print("  "+String(output));
-        }
-      else{
-        lcd.print(" "+String(output));
-        }
-    }
-    else{
-      lcd.print(String(output));
-    }
-    SetTemp(output); //mosfet
+    lcd.print(String(AnalogToTmp(T),1)+(char)223+"C" + "   OFF    "); 
   }
-  animationIndex++;
-  if(animationIndex>3)
-  {
-    animationIndex=0;
-  }
-   //Serial.print(String(T));
-   //Serial.print(" ");
-   //Serial.println(String(output));
 }
 
 void SetTemp(uint8_t PidOutput)  // arduino output = 0-5v, needed = >5
