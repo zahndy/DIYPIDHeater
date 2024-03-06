@@ -29,7 +29,10 @@ const int BtnDownPin = 6;
 const int MosFetPin = 9;
 const int PwrRelayPin = 2;
 
-int LCDCounter = 0;
+bool preHeat = false;
+bool isPreHeating = false;
+
+int animationIndex =0;
 
 //Thermistor
 int Vo;
@@ -63,6 +66,7 @@ void setup() {
   PrepareLCD();
   //TargetTemperature = 450; // default off state 18C for initial flash, use eeprom after
   ReadTempFromRom();
+  preHeat = true;
   delay(200);
 }
 
@@ -70,9 +74,7 @@ void loop() {
   unsigned long currentMillis = millis();
   Buttons(currentMillis);
   // update every 500ms
-  LCDCounter++;
   if (currentMillis - previousMillis >= 500) {
-    LCDCounter = 0;
     previousMillis = currentMillis;
     //read temp and perform PID
     PidStep();
@@ -100,10 +102,9 @@ void Buttons(unsigned long currentMillis)
       UpBtnState = UPreading;
       if (UpBtnState == HIGH) {
         if(AnalogToTmp(TargetTemperature)<(MaxTemp-5)){
-          if (PwrSwBtnState == HIGH) {
           TargetTemperature+=5;
           UpdateTempRom();}
-        }
+        
       }
     }
   }
@@ -113,10 +114,9 @@ void Buttons(unsigned long currentMillis)
       DownBtnState = DOWNreading;
       if (DownBtnState == HIGH) {
         if(AnalogToTmp(TargetTemperature)>(MinTemp+5)){
-          if (PwrSwBtnState == HIGH) {
           TargetTemperature-=5;
           UpdateTempRom();}
-        }
+        
       }
     }
   }
@@ -129,6 +129,7 @@ void Buttons(unsigned long currentMillis)
         digitalWrite(PwrRelayPin, HIGH);
         ReadTempFromRom();
         myPID.configure(Kp, Ki, Kd, Hz, output_bits, output_signed);
+        preHeat = true;
         PidStep();
         
       }
@@ -149,9 +150,9 @@ void Buttons(unsigned long currentMillis)
 void PrepareLCD()
 {
   lcd.clear();
-  lcd.print("Temp: ");
+  //lcd.print("Tmp:");
   lcd.setCursor(0,1);
-  lcd.print("Set: ");
+  lcd.print("Set:");
   lcd.setCursor(8,1);
   lcd.print(" PWM: ");
 }
@@ -175,18 +176,79 @@ void PidStep()
   int T = CurrentTemp();
   int setpoint = TargetTemperature;
   int feedback = T;
-  uint8_t output = myPID.step(setpoint, feedback);
-  lcd.setCursor(7,0); //Display
-  lcd.print(String(AnalogToTmp(T),1)+(char)223+"C");
-  lcd.setCursor(5,1);
-  lcd.print(AnalogToTmp(setpoint),0);
-  lcd.setCursor(13,1);
-  if(output<100){
-    if(output<10){lcd.print("  "+String(output));}
-    else{lcd.print(" "+String(output));}}
-  else{
-    lcd.print(String(output));}
-  SetTemp(output); //mosfet
+  
+  
+  lcd.setCursor(4,1);//Display
+  lcd.print(AnalogToTmp(setpoint)+(char)223+"C");
+
+  lcd.setCursor(0,0); 
+  
+  if(preHeat)
+  {
+    lcd.print(String(AnalogToTmp(T),1)+(char)223+"C" + "Warming up"); // 10 char left at the end
+    if(!isPreHeating)
+    {
+      SetTemp(output);
+      isPreHeating = true;
+    }
+    lcd.setCursor(13,1);
+    switch (animationIndex) {
+      case 0:
+        lcd.print(.);
+        break;
+      case 1:
+        lcd.print(..);
+        break;
+      case 2:
+        lcd.print(...);
+        break;
+      default:
+        lcd.print(   );
+        break;
+    }
+    if(T>setpoint)
+    {
+      preHeat = false;
+      isPreHeating = false;
+    }
+  }
+  else
+  {
+    
+    switch (animationIndex) {
+      case 0:
+        lcd.print(String(AnalogToTmp(T),1)+(char)223+"C" + "  Ready  \\");
+        break;
+      case 1:
+        lcd.print(String(AnalogToTmp(T),1)+(char)223+"C" + "  Ready  |");
+        break;
+      case 2:
+        lcd.print(String(AnalogToTmp(T),1)+(char)223+"C" + "  Ready  /");
+        break;
+      default:
+        lcd.print(String(AnalogToTmp(T),1)+(char)223+"C" + "  Ready  -");
+        break;
+    }
+    uint8_t output = myPID.step(setpoint, feedback);
+    lcd.setCursor(13,1);
+    if(output<100){
+      if(output<10){
+        lcd.print("  "+String(output));
+        }
+      else{
+        lcd.print(" "+String(output));
+        }
+    }
+    else{
+      lcd.print(String(output));
+    }
+    SetTemp(output); //mosfet
+  }
+  animationIndex++;
+  if(animationIndex>3)
+  {
+    animationIndex=0;
+  }
    //Serial.print(String(T));
    //Serial.print(" ");
    //Serial.println(String(output));
